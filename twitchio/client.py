@@ -24,20 +24,21 @@ DEALINGS IN THE SOFTWARE.
 
 import asyncio
 import inspect
-import warnings
 import logging
-import traceback
 import sys
-from typing import Union, Callable, List, Optional, Tuple, Any, Coroutine
+import traceback
+import warnings
+from typing import Any, Callable, Coroutine, List, Optional, Tuple, Union
 
 from twitchio.errors import HTTPException
+
 from . import models
-from .websocket import WSConnection
-from .http import TwitchHTTP
+from .cache import id_cache, user_cache
 from .channel import Channel
+from .http import TwitchHTTP
 from .message import Message
-from .user import User, PartialUser, SearchUser
-from .cache import user_cache, id_cache
+from .user import PartialUser, SearchUser, User
+from .websocket import WSConnection
 
 __all__ = ("Client",)
 
@@ -66,6 +67,8 @@ class Client:
     loop: :class:`asyncio.AbstractEventLoop`
         The event loop the Client uses.
     """
+
+    registered_callbacks: dict[int, str] = {}
 
     def __init__(
         self,
@@ -229,7 +232,7 @@ class Client:
             raise ValueError("Event callback must be a coroutine")
 
         event_name = name or callback.__name__
-        callback._event = event_name  # used to remove the event
+        self.registered_callbacks[id(callback)] = event_name
 
         if event_name in self._events:
             self._events[event_name].append(callback)
@@ -238,11 +241,14 @@ class Client:
             self._events[event_name] = [callback]
 
     def remove_event(self, callback: Callable) -> bool:
-        if not hasattr(callback, "_event"):
+        callback_id: int = id(callback)
+        event_name = self.registered_callbacks.get(callback_id)
+
+        if event_name is None:
             raise ValueError("Event callback is not a registered event")
 
-        if callback in self._events[callback._event]:
-            self._events[callback._event].remove(callback)
+        if callback in self._events[event_name]:
+            self._events[event_name].remove(callback)
             return True
 
         return False
@@ -543,7 +549,9 @@ class Client:
         data = await self._http.get_top_games()
         return [models.Game(d) for d in data]
 
-    async def fetch_games(self, ids: List[int] = None, names: List[str] = None) -> List[models.Game]:
+    async def fetch_games(
+        self, ids: List[int] = None, names: List[str] = None
+    ) -> List[models.Game]:
         """|coro|
 
         Fetches games by id or name.
@@ -869,7 +877,9 @@ class Client:
             async def event_error(error, data):
                 traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
         """
-        traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
+        traceback.print_exception(
+            type(error), error, error.__traceback__, file=sys.stderr
+        )
 
     async def event_ready(self):
         """|coro|
